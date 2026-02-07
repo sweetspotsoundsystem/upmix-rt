@@ -81,4 +81,4 @@ JUCE and GoogleTest are fetched automatically via CPM.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE.md)
