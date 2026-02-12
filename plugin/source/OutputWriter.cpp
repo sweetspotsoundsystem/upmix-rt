@@ -39,6 +39,9 @@ void OutputWriter::writeSample(const float* speakerOutputs,
     }
 
     // Upmix appears only on multi-out aux channels (3+), with dry/wet and gain.
+    // `speakerOutputs` is safe to read here because processBlock clamps
+    // `numOutputChannels <= kMaxOutputChannels` and decoder populates all
+    // kMaxOutputChannels each sample (active channels + zero/fade tail).
     for (int ch = 2; ch < numOutputChannels; ++ch) {
         int wetChannel = ch - 2;
         outputPtrs[ch][sampleIndex] = wet * speakerOutputs[wetChannel] * gainLinear;
