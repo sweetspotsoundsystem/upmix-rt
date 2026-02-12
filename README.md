@@ -36,6 +36,13 @@ A per-layout decoder matrix maps the 4 B-format channels to the target speaker c
 
 The LFE channel receives a lowpass-filtered version of W at -10 dB.
 
+### 4. Output routing
+
+- **Main output 1-2** is always dry stereo passthrough.
+- **Upmix channels** are routed only to multi-out aux outputs (labeled `1/2`, `3/4`, ...).
+- For full **22.2 wet** routing, enable aux outputs up to **23-24**.
+- **Dry/Wet** controls only the aux upmix level.
+
 ### Key properties
 
 - **Content-adaptive**: correlated content (vocals, dialog) stays up front; diffuse content (reverb, ambience) spreads to surrounds and height channels.
@@ -59,8 +66,8 @@ The LFE channel receives a lowpass-filtered version of W at -10 dB.
 | Parameter | Range | Default | Description |
 |-----------|-------|---------|-------------|
 | Layout | Stereo / 5.1 / 7.1.4 / 9.1.6 / 22.2 / AmbiX | 5.1 | Target speaker configuration |
-| Dry/Wet | 0–100% | 100% | Blend between original stereo and upmixed output |
-| Gain | -42 to 0 dB | 0 dB | Output gain |
+| Dry/Wet | 0–100% | 100% | Wet level for aux multi-out upmix channels |
+| Gain | -42 to 0 dB | 0 dB | Wet aux output gain (channels 3+) |
 
 ## Building
 

@@ -2,7 +2,7 @@
 # Install UpmixRT plugins to system plugin directories
 # Usage: ./install-plugins.sh [--release] [--sign-identity "Developer ID Application: ..."]
 #
-# For local development: ./install-plugins.sh
+# For local development (Debug): ./install-plugins.sh
 # For distribution: ./install-plugins.sh --release --sign-identity "Developer ID Application: Your Name (XXXXXXXXXX)"
 #
 # Note: Ad-hoc signed plugins (default) only work on the machine where they were signed.
@@ -12,7 +12,7 @@ set -e
 
 # Parse arguments
 BUILD_DIR="build"
-BUILD_TYPE="Release"
+BUILD_TYPE="Debug"
 SIGN_IDENTITY="-"  # Default to ad-hoc signing
 
 while [[ $# -gt 0 ]]; do

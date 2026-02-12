@@ -14,17 +14,19 @@ AudioPluginAudioProcessor::AudioPluginAudioProcessor()
 AudioPluginAudioProcessor::~AudioPluginAudioProcessor() = default;
 
 juce::AudioProcessor::BusesProperties AudioPluginAudioProcessor::createBusesProperties() {
-    // Multi-out: 1 main stereo bus + 11 aux stereo buses = 24 channels max (22.2)
+    // Multi-out: 1 main stereo bus (dry) + 12 aux stereo buses (wet) = 26 channels.
+    // This allows full 22.2 wet routing (24 ch) while keeping main 1-2 dry.
     // DAWs like Ableton expose each bus as a routable output pair.
-    constexpr int kNumAuxBuses = 11;
+    constexpr int kNumAuxBuses = 12;
     const juce::String auxNames[] = {
-        "3-4",  "5-6",  "7-8",  "9-10", "11-12", "13-14",
-        "15-16", "17-18", "19-20", "21-22", "23-24"
+        "1/2",  "3/4",  "5/6",  "7/8",
+        "9/10", "11/12", "13/14", "15/16",
+        "17/18", "19/20", "21/22", "23/24"
     };
 
     auto props = BusesProperties()
         .withInput("Input", juce::AudioChannelSet::stereo(), true)
-        .withOutput("1-2", juce::AudioChannelSet::stereo(), true);
+        .withOutput("Main", juce::AudioChannelSet::stereo(), true);
 
     for (int i = 0; i < kNumAuxBuses; ++i)
         props = props.withOutput(auxNames[i], juce::AudioChannelSet::stereo(), false);
@@ -138,7 +140,7 @@ void AudioPluginAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         // 3. Decode to speaker feeds
         decoder_.decode(bFormat, layout, speakerOutputs);
 
-        // 4. Output with dry/wet blend
+        // 4. Main out stays dry; upmix wet signal is routed to aux outputs
         outputWriter_.writeSample(speakerOutputs, L, R, dryWetTarget,
                                   gainDbTarget, numOutputChannels, outputPtrs, s);
     }
