@@ -19,7 +19,7 @@ Stereo input is processed sample-by-sample through four stages:
 L, R ──→ SpatialAnalyzer ──→ SpatialParams (icc, azimuth, diffuseness, elevation)
 L, R ──→ AmbisonicEncoder ──→ B-format [W, X, Y, Z]
 B-format ──→ AmbisonicDecoder ──→ speaker feeds [up to 64 ch]
-speakers ──→ OutputWriter ──→ JUCE output buffer (with dry/wet blend)
+speakers ──→ OutputWriter ──→ JUCE output buffer (main dry, aux wet)
 ```
 
 The filter bank is **analysis-only** -- audio never passes through it. W and Y are computed directly from raw input samples (phaseless). X and Z add spatial enrichment via decorrelated allpass chains.
@@ -29,7 +29,7 @@ The filter bank is **analysis-only** -- audio never passes through it. W and Y a
 1. `SpatialAnalyzer::process(L, R)` -- 8-band LR2 filter bank extracts per-band ICC, azimuth, energy; energy-weighted averages produce `SpatialParams`
 2. `AmbisonicEncoder::encode(L, R, params)` -- W = (L+R)/sqrt2, Y = (L-R)/sqrt2 (exact), X/Z from spatial enrichment + decorrelated diffuse
 3. `AmbisonicDecoder::decode(bFormat, layout)` -- ITU-constrained matrix multiply + LFE lowpass + click-free crossfade on layout change
-4. `OutputWriter::writeSample(...)` -- smoothed dry/wet blend, front L/R get dry signal mixed in, output gain applied
+4. `OutputWriter::writeSample(...)` -- main 1-2 are dry passthrough, channels 3+ carry smoothed wet upmix, output gain applied
 
 ## Invariants
 
@@ -76,7 +76,7 @@ Mirror for R with Y target = -1/sqrt(2). If you modify decoder matrices, you mus
 | `plugin/source/AmbisonicDecoder.cpp` | ITU-constrained decode + LFE + crossfade |
 | `plugin/source/SpatialAnalyzer.cpp` | Orchestrates filter bank + analysis bands |
 | `plugin/source/Decorrelator.cpp` | Allpass chains for diffuse field |
-| `test/source/AudioProcessorTest.cpp` | 59 tests covering all invariants |
+| `test/source/AudioProcessorTest.cpp` | 60 tests covering all invariants |
 
 ## Code conventions
 

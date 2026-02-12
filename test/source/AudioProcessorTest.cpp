@@ -995,8 +995,9 @@ TEST(ClickFreeTest, LayoutSwitchDuringPlayback) {
 }
 
 // ===== Dry/Wet Test =====
-// At 0% wet: only front L/R have signal (dry passthrough)
-// At 100% wet: all channels active
+// Main stereo (1-2) stays dry passthrough.
+// At 0% wet: aux outputs are silent.
+// At 100% wet: aux outputs carry decoded upmix.
 
 TEST(DryWetTest, ZeroWetOnlyFrontLR) {
     AmbisonicEncoder encoder;
@@ -1007,12 +1008,12 @@ TEST(DryWetTest, ZeroWetOnlyFrontLR) {
     decoder.prepare(48000.0, SpeakerLayout::Surround51);
     writer.prepare(48000.0);
 
-    constexpr int numCh = 6;
+    constexpr int numCh = 8;
     std::array<float, numCh> outputChannels{};
     float* ptrs[numCh];
     for (int i = 0; i < numCh; ++i) ptrs[i] = &outputChannels[static_cast<size_t>(i)];
 
-    // Feed signal at 0% wet (dry only) for enough samples to converge
+    // Feed signal at 0% wet for enough samples to converge smoothing.
     for (int s = 0; s < 5000; ++s) {
         float val = 0.5f * std::sin(2.0f * kPi * 1000.0f * static_cast<float>(s) / 48000.0f);
 
@@ -1026,16 +1027,15 @@ TEST(DryWetTest, ZeroWetOnlyFrontLR) {
         writer.writeSample(speakers, val, val, 0.0f, 0.0f, numCh, ptrs, 0);
     }
 
-    // After convergence with dryWet=0, output[0] and [1] should have dry signal,
-    // other channels should be near zero
+    // Main L/R should have dry signal, all aux channels should be near zero.
     float frontPower = outputChannels[0] * outputChannels[0] + outputChannels[1] * outputChannels[1];
-    float otherPower = 0.0f;
+    float auxPower = 0.0f;
     for (int ch = 2; ch < numCh; ++ch) {
-        otherPower += outputChannels[static_cast<size_t>(ch)] * outputChannels[static_cast<size_t>(ch)];
+        auxPower += outputChannels[static_cast<size_t>(ch)] * outputChannels[static_cast<size_t>(ch)];
     }
 
     EXPECT_GT(frontPower, 0.01f) << "Front L/R should have signal at 0% wet";
-    EXPECT_NEAR(otherPower, 0.0f, 1e-4f) << "Non-front channels should be silent at 0% wet";
+    EXPECT_NEAR(auxPower, 0.0f, 1e-4f) << "Aux outputs should be silent at 0% wet";
 }
 
 TEST(DryWetTest, FullWetAllChannelsActive) {
@@ -1047,8 +1047,10 @@ TEST(DryWetTest, FullWetAllChannelsActive) {
     decoder.prepare(48000.0, SpeakerLayout::Surround51);
     writer.prepare(48000.0);
 
-    constexpr int numCh = 6;
+    constexpr int numCh = 8;
     float channelEnergy[numCh] = {};
+    float mainTrackingError = 0.0f;
+    int mainTrackingCount = 0;
 
     for (int s = 0; s < 10000; ++s) {
         float val = 0.5f * std::sin(2.0f * kPi * 1000.0f * static_cast<float>(s) / 48000.0f);
@@ -1072,17 +1074,53 @@ TEST(DryWetTest, FullWetAllChannelsActive) {
                 channelEnergy[ch] += outputChannels[static_cast<size_t>(ch)]
                                    * outputChannels[static_cast<size_t>(ch)];
             }
+            mainTrackingError += std::abs(outputChannels[0] - val);
+            mainTrackingError += std::abs(outputChannels[1] + val);
+            mainTrackingCount += 2;
         }
     }
 
-    // At 100% wet, front L, R, C, and surround channels should have signal
-    // LFE (ch 3) is lowpassed so it will have energy too
-    EXPECT_GT(channelEnergy[0], 0.01f) << "L should have signal at 100% wet";
-    EXPECT_GT(channelEnergy[1], 0.01f) << "R should have signal at 100% wet";
-    EXPECT_GT(channelEnergy[2], 0.01f) << "C should have signal at 100% wet";
-    // LFE is lowpassed from W, so for 1kHz it should be attenuated but not zero
-    EXPECT_GT(channelEnergy[4], 0.001f) << "Ls should have signal at 100% wet";
-    EXPECT_GT(channelEnergy[5], 0.001f) << "Rs should have signal at 100% wet";
+    // Main output should remain dry passthrough even at 100% wet.
+    EXPECT_LT(mainTrackingError / static_cast<float>(mainTrackingCount), 1e-6f)
+        << "Main output should track dry passthrough at 100% wet";
+
+    // Aux channels 3-8 should carry mapped wet outputs:
+    // [wet L, wet R, C, LFE, Ls, Rs]
+    EXPECT_GT(channelEnergy[2], 0.01f) << "Wet L should be present on channel 3";
+    EXPECT_GT(channelEnergy[3], 0.01f) << "Wet R should be present on channel 4";
+    EXPECT_GT(channelEnergy[4], 0.01f) << "Center should be present on channel 5";
+    EXPECT_GT(channelEnergy[6], 0.001f) << "Ls should be present on channel 7";
+    EXPECT_GT(channelEnergy[7], 0.001f) << "Rs should be present on channel 8";
+}
+
+TEST(DryWetTest, AuxRoutingPreservesAllWetChannels) {
+    OutputWriter writer;
+    writer.prepare(48000.0);
+
+    constexpr int numWet = 24;
+    constexpr int numOut = numWet + 2;  // main dry stereo + wet aux
+
+    float speakers[kMaxOutputChannels] = {};
+    for (int ch = 0; ch < numWet; ++ch) {
+        speakers[ch] = 0.01f * static_cast<float>(ch + 1);
+    }
+
+    std::array<float, numOut> outputChannels{};
+    float* ptrs[numOut];
+    for (int ch = 0; ch < numOut; ++ch) {
+        ptrs[ch] = &outputChannels[static_cast<size_t>(ch)];
+    }
+
+    constexpr float dryL = 0.33f;
+    constexpr float dryR = -0.22f;
+    writer.writeSample(speakers, dryL, dryR, 1.0f, 0.0f, numOut, ptrs, 0);
+
+    EXPECT_FLOAT_EQ(outputChannels[0], dryL);
+    EXPECT_FLOAT_EQ(outputChannels[1], dryR);
+    for (int wetCh = 0; wetCh < numWet; ++wetCh) {
+        EXPECT_FLOAT_EQ(outputChannels[static_cast<size_t>(wetCh + 2)], speakers[wetCh])
+            << "Wet channel " << wetCh << " was not routed to aux output " << (wetCh + 2);
+    }
 }
 
 // ===== LFE Lowpass Test =====
@@ -1187,15 +1225,19 @@ TEST(GainTest, ZeroDbProducesUnchangedOutput) {
 TEST(GainTest, Minus42DbAttenuatesSignificantly) {
     AmbisonicEncoder encoder;
     AmbisonicDecoder decoder;
-    OutputWriter writer;
+    OutputWriter writerAttenuated;
+    OutputWriter writerReference;
 
     encoder.prepare(48000.0);
     decoder.prepare(48000.0, SpeakerLayout::Surround51);
-    writer.prepare(48000.0);
+    writerAttenuated.prepare(48000.0);
+    writerReference.prepare(48000.0);
 
-    constexpr int numCh = 6;
-    float energyAttenuation = 0.0f;
-    float energyReference = 0.0f;
+    constexpr int numCh = 8;
+    float wetEnergyAttenuated = 0.0f;
+    float wetEnergyReference = 0.0f;
+    float dryEnergyAttenuated = 0.0f;
+    float dryEnergyReference = 0.0f;
 
     for (int s = 0; s < 5000; ++s) {
         float val = 0.5f * std::sin(2.0f * kPi * 1000.0f * static_cast<float>(s) / 48000.0f);
@@ -1207,24 +1249,38 @@ TEST(GainTest, Minus42DbAttenuatesSignificantly) {
         float speakers[kMaxOutputChannels];
         decoder.decode(bFormat, SpeakerLayout::Surround51, speakers);
 
-        std::array<float, numCh> out{};
-        float* ptrs[numCh];
-        for (int i = 0; i < numCh; ++i) ptrs[i] = &out[static_cast<size_t>(i)];
+        std::array<float, numCh> outAtt{};
+        std::array<float, numCh> outRef{};
+        float* ptrsAtt[numCh];
+        float* ptrsRef[numCh];
+        for (int i = 0; i < numCh; ++i) {
+            ptrsAtt[i] = &outAtt[static_cast<size_t>(i)];
+            ptrsRef[i] = &outRef[static_cast<size_t>(i)];
+        }
 
-        writer.writeSample(speakers, val, val, 1.0f, -42.0f, numCh, ptrs, 0);
+        writerAttenuated.writeSample(speakers, val, val, 1.0f, -42.0f, numCh, ptrsAtt, 0);
+        writerReference.writeSample(speakers, val, val, 1.0f, 0.0f, numCh, ptrsRef, 0);
 
         if (s >= 2000) {
-            for (int ch = 0; ch < numCh; ++ch) {
-                energyAttenuation += out[static_cast<size_t>(ch)] * out[static_cast<size_t>(ch)];
-                energyReference += speakers[ch] * speakers[ch];
+            for (int ch = 0; ch < 2; ++ch) {
+                dryEnergyAttenuated += outAtt[static_cast<size_t>(ch)] * outAtt[static_cast<size_t>(ch)];
+                dryEnergyReference += outRef[static_cast<size_t>(ch)] * outRef[static_cast<size_t>(ch)];
+            }
+            for (int ch = 2; ch < numCh; ++ch) {
+                wetEnergyAttenuated += outAtt[static_cast<size_t>(ch)] * outAtt[static_cast<size_t>(ch)];
+                wetEnergyReference += outRef[static_cast<size_t>(ch)] * outRef[static_cast<size_t>(ch)];
             }
         }
     }
 
     // -42 dB linear = 10^(-42/20) ~= 0.0079, energy ratio ~= 6.3e-5
-    float ratio = energyAttenuation / (energyReference + kEpsilon);
-    EXPECT_LT(ratio, 0.0005f) << "Gain at -42 dB should attenuate output significantly (ratio=" << ratio << ")";
-    EXPECT_GT(ratio, 0.00001f) << "Gain at -42 dB should not be silent (ratio=" << ratio << ")";
+    float wetRatio = wetEnergyAttenuated / (wetEnergyReference + kEpsilon);
+    EXPECT_LT(wetRatio, 0.0005f) << "Gain at -42 dB should attenuate wet output significantly (ratio=" << wetRatio << ")";
+    EXPECT_GT(wetRatio, 0.00001f) << "Gain at -42 dB should not mute wet output (ratio=" << wetRatio << ")";
+
+    float dryRatio = dryEnergyAttenuated / (dryEnergyReference + kEpsilon);
+    EXPECT_NEAR(dryRatio, 1.0f, 1e-6f)
+        << "Dry output should remain unchanged by gain (ratio=" << dryRatio << ")";
 }
 
 TEST(GainTest, SilenceInSilenceOutWithGain) {
@@ -1267,6 +1323,8 @@ TEST(GainTest, NoSampleExceedsOnePointZeroDuringGainTransition) {
 
     constexpr int numCh = 6;
     float maxSample = 0.0f;
+    float dryTrackingError = 0.0f;
+    int dryTrackingCount = 0;
 
     // Gain starts at 0 dB (default), transitions to -24 dB and back
     for (int s = 0; s < 10000; ++s) {
@@ -1287,6 +1345,10 @@ TEST(GainTest, NoSampleExceedsOnePointZeroDuringGainTransition) {
 
         writer.writeSample(speakers, val, val, 1.0f, gainDb, numCh, ptrs, 0);
 
+        dryTrackingError += std::abs(out[0] - val);
+        dryTrackingError += std::abs(out[1] - val);
+        dryTrackingCount += 2;
+
         for (int ch = 0; ch < numCh; ++ch) {
             float absVal = std::abs(out[static_cast<size_t>(ch)]);
             if (absVal > maxSample) maxSample = absVal;
@@ -1295,6 +1357,8 @@ TEST(GainTest, NoSampleExceedsOnePointZeroDuringGainTransition) {
 
     EXPECT_LE(maxSample, 1.0f)
         << "Gain transition produced sample > 1.0: " << maxSample;
+    EXPECT_LT(dryTrackingError / static_cast<float>(dryTrackingCount), 1e-6f)
+        << "Dry main output should not be impacted by gain transitions";
 }
 
 // ===== Plugin instantiation test =====

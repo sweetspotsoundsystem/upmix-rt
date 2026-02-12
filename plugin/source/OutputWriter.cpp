@@ -22,29 +22,26 @@ void OutputWriter::writeSample(const float* speakerOutputs,
                                 int numOutputChannels,
                                 float** outputPtrs,
                                 int sampleIndex) {
-    // Smooth dry/wet parameter
+    // Smooth dry/wet parameter for aux wet outputs
     smoothedDryWet_ += dryWetAlpha_ * (dryWetTarget - smoothedDryWet_);
     float wet = smoothedDryWet_;
-    float dry = 1.0f - wet;
 
     // Smooth gain parameter (in dB domain) and convert to linear
     smoothedGainDb_ += gainAlpha_ * (gainDbTarget - smoothedGainDb_);
     float gainLinear = std::pow(10.0f, smoothedGainDb_ / 20.0f);
 
-    for (int ch = 0; ch < numOutputChannels; ++ch) {
-        float wetSample = speakerOutputs[ch];
+    // Main stereo out (1-2) is always dry passthrough and never gain-scaled.
+    if (numOutputChannels > 0) {
+        outputPtrs[0][sampleIndex] = dryL;
+    }
+    if (numOutputChannels > 1) {
+        outputPtrs[1][sampleIndex] = dryR;
+    }
 
-        // Front L/R get dry signal blended in
-        float sample;
-        if (ch == 0) {
-            sample = wet * wetSample + dry * dryL;
-        } else if (ch == 1) {
-            sample = wet * wetSample + dry * dryR;
-        } else {
-            sample = wet * wetSample;
-        }
-
-        outputPtrs[ch][sampleIndex] = sample * gainLinear;
+    // Upmix appears only on multi-out aux channels (3+), with dry/wet and gain.
+    for (int ch = 2; ch < numOutputChannels; ++ch) {
+        int wetChannel = ch - 2;
+        outputPtrs[ch][sampleIndex] = wet * speakerOutputs[wetChannel] * gainLinear;
     }
 }
 
